@@ -253,6 +253,7 @@ function analyzeWritingPatterns(text) {
   }).filter((passage) => passage.weight > 0);
 
   const totalWeight = passages.reduce((sum, passage) => sum + passage.weight, 0);
+  const automaticReplacements = passages.filter((passage) => reviseFormulaicText(passage.sentence) !== passage.sentence).length;
   const flaggedWords = passages.reduce((sum, passage) => sum + passage.words, 0);
   const totalWords = text.trim().split(/\s+/).filter(Boolean).length || 1;
   const flaggedSentenceRate = sentences.length ? passages.length / sentences.length : 0;
@@ -267,6 +268,7 @@ function analyzeWritingPatterns(text) {
     flaggedWordPercentage: Math.round((flaggedWords / totalWords) * 100),
     totalSentences: sentences.length,
     flaggedSentences: passages.length,
+    automaticReplacements,
     revisedText: reviseFormulaicText(text),
   };
 }
@@ -500,7 +502,8 @@ function HighlightedPassage({ passage }) {
 function WritingPatternPanel({ report }) {
   const analysis = report.writingAnalysis;
   const [showAll, setShowAll] = useState(false);
-  const [revisedText, setRevisedText] = useState(analysis.revisedText);
+  const [revisedText, setRevisedText] = useState(report.sourceText);
+  const [revisionApplied, setRevisionApplied] = useState(false);
   const [copied, setCopied] = useState(false);
   const visiblePassages = showAll ? analysis.passages : analysis.passages.slice(0, 5);
 
@@ -577,10 +580,23 @@ function WritingPatternPanel({ report }) {
 
         <div className="revision-studio" id="revision-studio">
           <div className="subsection-heading"><div><span>02</span><strong>Assisted revision draft</strong></div><small>Editable</small></div>
-          <p className="revision-note">Template-like wording has been simplified. Review every change and add your own reasoning, evidence, and disciplinary voice before using this draft.</p>
+          <div className={`apply-revision-box ${revisionApplied ? 'applied' : ''}`}>
+            <div>
+              <WandSparkles size={18} />
+              <span><strong>{revisionApplied ? 'Safe revisions applied' : 'Create a more natural academic draft'}</strong><small>{revisionApplied ? `${analysis.automaticReplacements} phrase-level passage revision${analysis.automaticReplacements === 1 ? '' : 's'} applied. Continue editing below.` : `Apply ${analysis.automaticReplacements} safe phrase-level revision${analysis.automaticReplacements === 1 ? '' : 's'} while preserving numbers, citations, and claims.`}</small></span>
+            </div>
+            <button
+              disabled={revisionApplied || analysis.automaticReplacements === 0}
+              onClick={() => { setRevisedText(analysis.revisedText); setRevisionApplied(true); }}
+            >
+              {revisionApplied ? <><Check size={15} /> Applied</> : <><WandSparkles size={15} /> Apply natural academic revision</>}
+            </button>
+          </div>
+          {analysis.automaticReplacements === 0 && <div className="manual-revision-notice"><PenLine size={15} /><span>No phrase can be replaced automatically without risking a change to the research meaning. Use the highlighted guidance on the left and type directly in the editor below.</span></div>}
+          <p className="revision-note">This box contains the complete manuscript and is directly editable. Review every change and add your own reasoning, evidence, and disciplinary voice.</p>
           <textarea value={revisedText} onChange={(event) => setRevisedText(event.target.value)} aria-label="Assisted revision draft" />
           <div className="revision-actions">
-            <button onClick={() => setRevisedText(report.sourceText)}>Restore original</button>
+            <button onClick={() => { setRevisedText(report.sourceText); setRevisionApplied(false); }}>Restore original</button>
             <button onClick={copyRevision}><ClipboardCheck size={15} /> {copied ? 'Copied' : 'Copy draft'}</button>
             <button onClick={() => downloadRevision('txt')}><Download size={15} /> TXT</button>
             <button className="primary" onClick={() => downloadRevision('docx')}><Download size={15} /> Word</button>
