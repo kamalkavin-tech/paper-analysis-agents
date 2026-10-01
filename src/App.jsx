@@ -189,6 +189,21 @@ const writingPatterns = [
   { regex: /\bfor the purpose of\b/gi, category: 'Wordy purpose phrase', weight: 1, replacement: 'to' },
   { regex: /\bhas been shown to be\b/gi, category: 'Indirect construction', weight: 2, replacement: 'is' },
   { regex: /\b(?:completely|entirely) eliminate\b/gi, category: 'Unqualified absolute claim', weight: 2, replacement: 'reduce' },
+  { regex: /\bare fused\b/gi, category: 'Passive technical construction', weight: 2, replacement: 'form a combined input' },
+  { regex: /\bis fused\b/gi, category: 'Passive technical construction', weight: 2, replacement: 'forms a combined input' },
+  { regex: /\bare calibrated\b/gi, category: 'Passive technical construction', weight: 2, replacement: 'undergo calibration' },
+  { regex: /\bis calibrated\b/gi, category: 'Passive technical construction', weight: 2, replacement: 'undergoes calibration' },
+  { regex: /\bare checked for\b/gi, category: 'Passive technical construction', weight: 2, replacement: 'receive checks for' },
+  { regex: /\bis checked for\b/gi, category: 'Passive technical construction', weight: 2, replacement: 'receives a check for' },
+  { regex: /\bare designed to\b/gi, category: 'Passive purpose construction', weight: 1, replacement: 'aim to' },
+  { regex: /\bis designed to\b/gi, category: 'Passive purpose construction', weight: 1, replacement: 'aims to' },
+  { regex: /\bare intended to\b/gi, category: 'Passive purpose construction', weight: 1, replacement: 'aim to' },
+  { regex: /\bis intended to\b/gi, category: 'Passive purpose construction', weight: 1, replacement: 'aims to' },
+  { regex: /\bcan be used to\b/gi, category: 'Indirect capability construction', weight: 1, replacement: 'can help' },
+  { regex: /\bare used to\b/gi, category: 'Passive function construction', weight: 1, replacement: 'help to' },
+  { regex: /\bis used to\b/gi, category: 'Passive function construction', weight: 1, replacement: 'helps to' },
+  { regex: /\bare based on\b/gi, category: 'Passive basis construction', weight: 1, replacement: 'draw on' },
+  { regex: /\bis based on\b/gi, category: 'Passive basis construction', weight: 1, replacement: 'draws on' },
 ];
 
 function splitSentencesWithPunctuation(text) {
@@ -518,11 +533,19 @@ function WritingPatternPanel({ report }) {
   const visiblePassages = showAll ? analysis.passages : analysis.passages.slice(0, 5);
   const currentDraftAnalysis = useMemo(() => analyzeWritingPatterns(revisedText), [revisedText]);
   const indicatorChange = analysis.indicator - currentDraftAnalysis.indicator;
+  const draftChanged = revisedText !== report.sourceText;
 
   const copyRevision = async () => {
     await navigator.clipboard.writeText(revisedText);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1800);
+  };
+
+  const applyNaturalRevision = () => {
+    const updatedDraft = reviseFormulaicText(report.sourceText);
+    setRevisedText(updatedDraft);
+    setRevisionApplied(true);
+    window.setTimeout(() => document.getElementById('revision-editor')?.focus(), 50);
   };
 
   const triggerRevisionDownload = (blob, fileName) => {
@@ -607,8 +630,8 @@ function WritingPatternPanel({ report }) {
               <span><strong>{revisionApplied ? 'Safe revisions applied' : 'Create a more natural academic draft'}</strong><small>{revisionApplied ? `${analysis.automaticReplacements} phrase-level passage revision${analysis.automaticReplacements === 1 ? '' : 's'} applied. Continue editing below.` : `Apply ${analysis.automaticReplacements} safe phrase-level revision${analysis.automaticReplacements === 1 ? '' : 's'} while preserving numbers, citations, and claims.`}</small></span>
             </div>
             <button
-              disabled={revisionApplied || analysis.automaticReplacements === 0}
-              onClick={() => { setRevisedText(analysis.revisedText); setRevisionApplied(true); }}
+              disabled={revisionApplied}
+              onClick={applyNaturalRevision}
             >
               {revisionApplied ? <><Check size={15} /> Applied</> : <><WandSparkles size={15} /> Apply natural academic revision</>}
             </button>
@@ -617,7 +640,7 @@ function WritingPatternPanel({ report }) {
           <div className="live-comparison">
             <div className="comparison-title">
               <div><BarChart3 size={17} /><span><strong>Live writing-pattern comparison</strong><small>Recalculates automatically as the revision changes</small></span></div>
-              <i className={indicatorChange > 0 ? 'improved' : indicatorChange < 0 ? 'increased' : ''}>{indicatorChange > 0 ? `−${indicatorChange} points` : indicatorChange < 0 ? `+${Math.abs(indicatorChange)} points` : 'No change yet'}</i>
+              <i className={indicatorChange > 0 ? 'improved' : indicatorChange < 0 ? 'increased' : draftChanged ? 'changed' : ''}>{indicatorChange > 0 ? `−${indicatorChange} points` : indicatorChange < 0 ? `+${Math.abs(indicatorChange)} points` : draftChanged ? 'Text changed · same score' : 'No change yet'}</i>
             </div>
             <div className="comparison-grid">
               <div>
@@ -640,7 +663,7 @@ function WritingPatternPanel({ report }) {
             <button className="word-download" disabled={downloadState.status === 'working'} onClick={() => downloadRevision('docx')}>Download Word</button>
           </div>
           {downloadState.message && <div className={`download-feedback ${downloadState.status}`}>{downloadState.status === 'success' ? <CheckCircle2 size={15} /> : downloadState.status === 'error' ? <AlertTriangle size={15} /> : <Clock3 size={15} />}<span>{downloadState.message}</span></div>}
-          <textarea value={revisedText} onChange={(event) => setRevisedText(event.target.value)} aria-label="Assisted revision draft" />
+          <textarea id="revision-editor" value={revisedText} onChange={(event) => setRevisedText(event.target.value)} aria-label="Assisted revision draft" />
           <div className="revision-actions">
             <button onClick={() => { setRevisedText(report.sourceText); setRevisionApplied(false); }}>Restore original</button>
             <button onClick={copyRevision}><ClipboardCheck size={15} /> {copied ? 'Copied' : 'Copy draft'}</button>
