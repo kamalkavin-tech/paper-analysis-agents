@@ -22,6 +22,7 @@ import {
   Menu,
   MessageSquareText,
   MoreHorizontal,
+  PenLine,
   Plus,
   Search,
   Settings,
@@ -173,6 +174,12 @@ const writingPatterns = [
   { regex: /\bseamlessly\b/gi, category: 'Unsubstantiated qualifier', weight: 2, replacement: 'consistently' },
   { regex: /\b(?:comprehensive|robust) (?:understanding|solution|framework|approach)\b/gi, category: 'Broad quality claim', weight: 2, replacement: 'defined approach' },
   { regex: /\bthis (?:innovative|novel) (?:study|approach|framework)\b/gi, category: 'Self-declared novelty', weight: 3, replacement: 'this study' },
+  { regex: /\bhas the potential to\b/gi, category: 'Generic possibility claim', weight: 2, replacement: 'may' },
+  { regex: /\ba wide range of\b/gi, category: 'Unspecific quantity', weight: 2, replacement: 'several' },
+  { regex: /\bin order to\b/gi, category: 'Wordy construction', weight: 1, replacement: 'to' },
+  { regex: /\bdue to the fact that\b/gi, category: 'Wordy causal phrase', weight: 2, replacement: 'because' },
+  { regex: /\bwith the aim of\b/gi, category: 'Wordy purpose phrase', weight: 1, replacement: 'to' },
+  { regex: /\bserves? as (?:a|an|the)\b/gi, category: 'Generic framing', weight: 1, replacement: 'is a' },
 ];
 
 function splitSentencesWithPunctuation(text) {
@@ -210,6 +217,22 @@ function analyzeWritingPatterns(text) {
     if (words > 38) {
       triggers.push({ phrase: `${words}-word sentence`, category: 'Dense sentence structure' });
       weight += 2;
+    } else if (words > 28) {
+      triggers.push({ phrase: `${words}-word sentence`, category: 'Long sentence structure' });
+      weight += 1;
+    }
+    const passivePhrases = sentence.match(/\b(?:is|are|was|were|be|been|being)\s+(?:\w+ly\s+)?\w+(?:ed|en)\b/gi) || [];
+    passivePhrases.slice(0, 3).forEach((phrase) => triggers.push({ phrase, category: 'Possible passive construction' }));
+    weight += Math.min(2, passivePhrases.length);
+    const nominalizations = sentence.match(/\b[a-z]{5,}(?:tion|sion|ment|ity|ness|ance|ence)\b/gi) || [];
+    if (nominalizations.length >= 3) {
+      nominalizations.slice(0, 4).forEach((phrase) => triggers.push({ phrase, category: 'Abstract-noun cluster' }));
+      weight += 1;
+    }
+    const openingTransition = sentence.match(/^(?:however|therefore|consequently|thus|notably|importantly|overall)\b[:,]?/i);
+    if (openingTransition) {
+      triggers.push({ phrase: openingTransition[0], category: 'Predictable sentence transition' });
+      weight += 1;
     }
     const vagueClaims = sentence.match(/\b(?:many studies|research shows|experts agree|it is widely known|significant impact)\b/gi) || [];
     vagueClaims.forEach((phrase) => triggers.push({ phrase, category: 'Unattributed generalization' }));
@@ -221,7 +244,11 @@ function analyzeWritingPatterns(text) {
       weight,
       triggers,
       level: weight >= 5 ? 'high' : weight >= 2 ? 'medium' : 'low',
-      suggestion: reviseFormulaicText(sentence),
+      suggestion: reviseFormulaicText(sentence) !== sentence
+        ? reviseFormulaicText(sentence)
+        : passivePhrases.length
+          ? `Name the actor responsible for the action, then recast this sentence in active voice: ${sentence}`
+          : `Consider splitting or making the main claim more concrete: ${sentence}`,
     };
   }).filter((passage) => passage.weight > 0);
 
@@ -548,7 +575,7 @@ function WritingPatternPanel({ report }) {
           {analysis.passages.length > 5 && <button className="show-all-button" onClick={() => setShowAll(!showAll)}>{showAll ? 'Show fewer passages' : `Show all ${analysis.passages.length} passages`} <ChevronDown size={15} /></button>}
         </div>
 
-        <div className="revision-studio">
+        <div className="revision-studio" id="revision-studio">
           <div className="subsection-heading"><div><span>02</span><strong>Assisted revision draft</strong></div><small>Editable</small></div>
           <p className="revision-note">Template-like wording has been simplified. Review every change and add your own reasoning, evidence, and disciplinary voice before using this draft.</p>
           <textarea value={revisedText} onChange={(event) => setRevisedText(event.target.value)} aria-label="Assisted revision draft" />
@@ -723,6 +750,7 @@ function Report({ report, onNewReview }) {
         </div>
         <div className="report-actions">
           <button className="secondary-button" onClick={onNewReview}><Plus size={16} /> New review</button>
+          <button className="revision-button" onClick={() => document.getElementById('revision-studio')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}><PenLine size={16} /> Edit revised paper</button>
           <div className="export-control">
             <select value={exportFormat} onChange={(event) => setExportFormat(event.target.value)} aria-label="Export format">
               {exportFormats.map((format) => <option value={format.value} key={format.value}>{format.label}</option>)}
@@ -740,6 +768,7 @@ function Report({ report, onNewReview }) {
         <div className="metric-card"><FileCheck2 size={21} /><span>Sections found</span><strong>{report.sections.length}<small> / 8</small></strong></div>
         <div className="metric-card"><MessageSquareText size={21} /><span>Action items</span><strong>{report.issueCount}</strong></div>
         <div className="metric-card"><Library size={21} /><span>Citation markers</span><strong>{report.citations}</strong></div>
+        <div className="metric-card flagged-metric"><Highlighter size={21} /><span>Words in flagged passages</span><strong>{report.writingAnalysis.flaggedWords}<small> / {report.words.toLocaleString()}</small></strong></div>
       </section>
 
       <WritingPatternPanel report={report} />
