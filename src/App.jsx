@@ -158,6 +158,92 @@ function countMatches(text, regex) {
   return (text.match(regex) || []).length;
 }
 
+const writingPatterns = [
+  { regex: /\bin today'?s rapidly evolving(?: world|landscape)?\b/gi, category: 'Stock opening', weight: 3, replacement: 'Recent developments' },
+  { regex: /\bit is (?:important|worth) to note that\b/gi, category: 'Meta-commentary', weight: 3, replacement: '' },
+  { regex: /\b(?:delve|delves|delved) into\b/gi, category: 'Template vocabulary', weight: 3, replacement: 'examine' },
+  { regex: /\bin the realm of\b/gi, category: 'Vague framing', weight: 2, replacement: 'in' },
+  { regex: /\b(?:multifaceted|ever-evolving|transformative|groundbreaking)\b/gi, category: 'Generic intensifier', weight: 2, replacement: 'complex' },
+  { regex: /\bplays? (?:a )?(?:pivotal|crucial|vital) role in\b/gi, category: 'Formulaic claim', weight: 3, replacement: 'contributes to' },
+  { regex: /\b(?:underscores?|highlights?) the importance of\b/gi, category: 'Generic significance claim', weight: 3, replacement: 'shows the relevance of' },
+  { regex: /\b(?:moreover|furthermore|additionally)\b[:,]?/gi, category: 'Repeated transition', weight: 1, replacement: '' },
+  { regex: /\bin conclusion\b[:,]?/gi, category: 'Stock transition', weight: 1, replacement: 'Overall,' },
+  { regex: /\b(?:a myriad of|a plethora of)\b/gi, category: 'Inflated wording', weight: 2, replacement: 'several' },
+  { regex: /\b(?:leverage|utilize|utilise)\b/gi, category: 'Needlessly complex verb', weight: 1, replacement: 'use' },
+  { regex: /\bseamlessly\b/gi, category: 'Unsubstantiated qualifier', weight: 2, replacement: 'consistently' },
+  { regex: /\b(?:comprehensive|robust) (?:understanding|solution|framework|approach)\b/gi, category: 'Broad quality claim', weight: 2, replacement: 'defined approach' },
+  { regex: /\bthis (?:innovative|novel) (?:study|approach|framework)\b/gi, category: 'Self-declared novelty', weight: 3, replacement: 'this study' },
+];
+
+function splitSentencesWithPunctuation(text) {
+  return (text.match(/[^.!?\n]+(?:[.!?]+|$)/g) || [])
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence.split(/\s+/).length >= 4);
+}
+
+function reviseFormulaicText(source) {
+  let revised = source;
+  writingPatterns.forEach((pattern) => {
+    pattern.regex.lastIndex = 0;
+    revised = revised.replace(pattern.regex, pattern.replacement);
+  });
+  return revised
+    .replace(/\s+([,.;:])/g, '$1')
+    .replace(/([.!?])\s*([a-z])/g, (_, punctuation, letter) => `${punctuation} ${letter.toUpperCase()}`)
+    .replace(/\n[ \t]+/g, '\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
+function analyzeWritingPatterns(text) {
+  const sentences = splitSentencesWithPunctuation(text);
+  const passages = sentences.map((sentence, index) => {
+    const triggers = [];
+    let weight = 0;
+    writingPatterns.forEach((pattern) => {
+      pattern.regex.lastIndex = 0;
+      const matches = sentence.match(pattern.regex) || [];
+      matches.forEach((phrase) => triggers.push({ phrase, category: pattern.category }));
+      weight += matches.length * pattern.weight;
+    });
+    const words = sentence.split(/\s+/).filter(Boolean).length;
+    if (words > 38) {
+      triggers.push({ phrase: `${words}-word sentence`, category: 'Dense sentence structure' });
+      weight += 2;
+    }
+    const vagueClaims = sentence.match(/\b(?:many studies|research shows|experts agree|it is widely known|significant impact)\b/gi) || [];
+    vagueClaims.forEach((phrase) => triggers.push({ phrase, category: 'Unattributed generalization' }));
+    weight += vagueClaims.length * 3;
+    return {
+      id: index + 1,
+      sentence,
+      words,
+      weight,
+      triggers,
+      level: weight >= 5 ? 'high' : weight >= 2 ? 'medium' : 'low',
+      suggestion: reviseFormulaicText(sentence),
+    };
+  }).filter((passage) => passage.weight > 0);
+
+  const totalWeight = passages.reduce((sum, passage) => sum + passage.weight, 0);
+  const flaggedWords = passages.reduce((sum, passage) => sum + passage.words, 0);
+  const totalWords = text.trim().split(/\s+/).filter(Boolean).length || 1;
+  const flaggedSentenceRate = sentences.length ? passages.length / sentences.length : 0;
+  const signalDensity = sentences.length ? totalWeight / sentences.length : 0;
+  const indicator = Math.round(Math.min(96, flaggedSentenceRate * 58 + Math.min(38, signalDensity * 13)));
+
+  return {
+    indicator,
+    label: indicator >= 65 ? 'High formulaic density' : indicator >= 35 ? 'Moderate formulaic density' : 'Low formulaic density',
+    passages: passages.sort((a, b) => b.weight - a.weight),
+    flaggedWords,
+    flaggedWordPercentage: Math.round((flaggedWords / totalWords) * 100),
+    totalSentences: sentences.length,
+    flaggedSentences: passages.length,
+    revisedText: reviseFormulaicText(text),
+  };
+}
+
 function analyzePaper(text) {
   const words = text.trim().split(/\s+/).filter(Boolean);
   const sentences = text.split(/[.!?]+(?:\s|$)/).map((item) => item.trim()).filter(Boolean);
@@ -168,6 +254,7 @@ function analyzePaper(text) {
   const strongClaims = countMatches(text, /\b(?:proves?|always|never|guarantees?|undeniably|without doubt|all studies)\b/gi);
   const formulaicSignals = countMatches(text, /\b(?:in today'?s rapidly evolving|it is important to note|it is worth noting|delve into|complex landscape|multifaceted|pivotal role|plays? a crucial role|underscore(?:s|d)? the importance|in the realm of|moreover|furthermore|in conclusion)\b/gi);
   const sections = sectionMatchers.filter(([, regex]) => regex.test(text)).map(([name]) => name);
+  const writingAnalysis = analyzeWritingPatterns(text);
   const has = (section) => sections.includes(section);
   const score = Math.max(28, Math.min(96,
     36 + sections.length * 5 + Math.min(citations, 10) * 1.2 + (words.length >= 500 ? 8 : words.length >= 250 ? 4 : 0)
@@ -252,6 +339,8 @@ function analyzePaper(text) {
     score: Math.round(score),
     issueCount,
     findings,
+    writingAnalysis,
+    sourceText: text,
   };
 }
 
@@ -366,6 +455,116 @@ function LoadingReview({ activeStep }) {
   );
 }
 
+function HighlightedPassage({ passage }) {
+  const phrases = passage.triggers
+    .map((trigger) => trigger.phrase)
+    .filter((phrase) => passage.sentence.toLowerCase().includes(phrase.toLowerCase()))
+    .sort((a, b) => b.length - a.length);
+  if (!phrases.length) return passage.sentence;
+  const escaped = phrases.map((phrase) => phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const expression = new RegExp(`(${escaped.join('|')})`, 'gi');
+  return passage.sentence.split(expression).map((part, index) => (
+    phrases.some((phrase) => phrase.toLowerCase() === part.toLowerCase())
+      ? <mark key={`${part}-${index}`}>{part}</mark>
+      : <span key={`${part}-${index}`}>{part}</span>
+  ));
+}
+
+function WritingPatternPanel({ report }) {
+  const analysis = report.writingAnalysis;
+  const [showAll, setShowAll] = useState(false);
+  const [revisedText, setRevisedText] = useState(analysis.revisedText);
+  const [copied, setCopied] = useState(false);
+  const visiblePassages = showAll ? analysis.passages : analysis.passages.slice(0, 5);
+
+  const copyRevision = async () => {
+    await navigator.clipboard.writeText(revisedText);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1800);
+  };
+
+  const downloadRevision = async (format) => {
+    if (format === 'txt') {
+      const blob = new Blob([revisedText], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'scholaris-assisted-revision.txt';
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      return;
+    }
+    const { Document: DocxDocument, HeadingLevel, Packer, Paragraph } = await import('docx');
+    const paragraphs = revisedText.split(/\n+/).filter(Boolean);
+    const document = new DocxDocument({ sections: [{ properties: {}, children: [
+      new Paragraph({ text: report.title, heading: HeadingLevel.TITLE }),
+      ...paragraphs.map((paragraph) => new Paragraph(paragraph)),
+    ] }] });
+    const blob = await Packer.toBlob(document);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'scholaris-assisted-revision.docx';
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  return (
+    <section className="pattern-panel">
+      <div className="pattern-heading">
+        <div>
+          <div className="eyebrow"><Highlighter size={15} /> Authorship-pattern review</div>
+          <h2>Formulaic writing detail</h2>
+          <p>Passage-level signals that may sound generic, repetitive, or insufficiently attributable.</p>
+        </div>
+        <div className={`pattern-score ${analysis.indicator >= 65 ? 'high' : analysis.indicator >= 35 ? 'moderate' : 'low'}`}>
+          <strong>{analysis.indicator}<small>%</small></strong>
+          <span>Formulaic writing<br />indicator</span>
+        </div>
+      </div>
+
+      <div className="pattern-disclaimer"><AlertTriangle size={17} /><span><strong>Not an AI-authorship percentage.</strong> This heuristic measures visible writing patterns only. Human and AI-assisted prose can both trigger or avoid these signals.</span></div>
+
+      <div className="pattern-stats">
+        <div><strong>{analysis.label}</strong><span>Overall pattern level</span></div>
+        <div><strong>{analysis.flaggedSentences} / {analysis.totalSentences}</strong><span>Sentences flagged</span></div>
+        <div><strong>{analysis.flaggedWords}</strong><span>Words in flagged passages</span></div>
+        <div><strong>{analysis.flaggedWordPercentage}%</strong><span>Manuscript words affected</span></div>
+      </div>
+
+      <div className="pattern-content">
+        <div className="passage-review">
+          <div className="subsection-heading"><div><span>01</span><strong>Flagged passages and words</strong></div><small>{analysis.passages.length} passage{analysis.passages.length === 1 ? '' : 's'}</small></div>
+          {visiblePassages.length ? visiblePassages.map((passage) => (
+            <article className="passage-card" key={passage.id}>
+              <div className="passage-meta"><span>Sentence {passage.id}</span><i className={passage.level}>{passage.level} signal</i></div>
+              <p className="passage-text"><HighlightedPassage passage={passage} /></p>
+              <div className="trigger-list">
+                {passage.triggers.map((trigger, index) => <span key={`${trigger.phrase}-${index}`}><b>{trigger.phrase}</b> · {trigger.category}</span>)}
+              </div>
+              {passage.suggestion !== passage.sentence && <div className="sentence-suggestion"><span>Suggested revision</span><p>{passage.suggestion}</p></div>}
+            </article>
+          )) : <div className="no-passages"><CheckCircle2 size={22} /><strong>No configured formulaic patterns were detected.</strong><span>This does not establish human authorship; continue checking evidence and attribution.</span></div>}
+          {analysis.passages.length > 5 && <button className="show-all-button" onClick={() => setShowAll(!showAll)}>{showAll ? 'Show fewer passages' : `Show all ${analysis.passages.length} passages`} <ChevronDown size={15} /></button>}
+        </div>
+
+        <div className="revision-studio">
+          <div className="subsection-heading"><div><span>02</span><strong>Assisted revision draft</strong></div><small>Editable</small></div>
+          <p className="revision-note">Template-like wording has been simplified. Review every change and add your own reasoning, evidence, and disciplinary voice before using this draft.</p>
+          <textarea value={revisedText} onChange={(event) => setRevisedText(event.target.value)} aria-label="Assisted revision draft" />
+          <div className="revision-actions">
+            <button onClick={() => setRevisedText(report.sourceText)}>Restore original</button>
+            <button onClick={copyRevision}><ClipboardCheck size={15} /> {copied ? 'Copied' : 'Copy draft'}</button>
+            <button onClick={() => downloadRevision('txt')}><Download size={15} /> TXT</button>
+            <button className="primary" onClick={() => downloadRevision('docx')}><Download size={15} /> Word</button>
+          </div>
+          <div className="revision-guardrail"><ShieldCheck size={16} /><span>Numbers, citations, and research claims are not intentionally altered. The author must verify the final text.</span></div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function Report({ report, onNewReview }) {
   const [selected, setSelected] = useState('scholar');
   const [exportFormat, setExportFormat] = useState('pdf');
@@ -378,6 +577,15 @@ function Report({ report, onNewReview }) {
       report.title,
       `Overall readiness indicator: ${report.score}/100`,
       `Words: ${report.words} | Citations detected: ${report.citations} | Sections: ${report.sections.join(', ') || 'None detected'}`,
+      '',
+      'AUTHORSHIP-PATTERN REVIEW',
+      `Formulaic writing indicator: ${report.writingAnalysis.indicator}% (not an AI-authorship percentage)`,
+      `Flagged sentences: ${report.writingAnalysis.flaggedSentences}/${report.writingAnalysis.totalSentences} | Words in flagged passages: ${report.writingAnalysis.flaggedWords}`,
+      ...report.writingAnalysis.passages.flatMap((passage) => [
+        `- Sentence ${passage.id} [${passage.level.toUpperCase()}]: ${passage.sentence}`,
+        `  Signals: ${passage.triggers.map((trigger) => `${trigger.phrase} (${trigger.category})`).join('; ')}`,
+        `  Suggested revision: ${passage.suggestion}`,
+      ]),
       '',
       ...agents.flatMap((agent) => [
         agent.name.toUpperCase(),
@@ -400,6 +608,7 @@ function Report({ report, onNewReview }) {
     },
     readinessIndicator: report.score,
     actionItemCount: report.issueCount,
+    writingPatternReview: report.writingAnalysis,
     assessments: agents.map((agent) => ({
       agent: agent.name,
       focus: agent.short,
@@ -533,6 +742,8 @@ function Report({ report, onNewReview }) {
         <div className="metric-card"><Library size={21} /><span>Citation markers</span><strong>{report.citations}</strong></div>
       </section>
 
+      <WritingPatternPanel report={report} />
+
       <section className="review-layout">
         <aside className="agent-nav">
           <p>Specialist assessments</p>
@@ -551,10 +762,6 @@ function Report({ report, onNewReview }) {
         </aside>
 
         <article className="findings-panel">
-          <div className="authorship-guidance">
-            <Highlighter size={18} />
-            <div><strong>Authorship guidance</strong><span>{report.formulaicSignals} formulaic-language signal{report.formulaicSignals === 1 ? '' : 's'} found. This is a writing-pattern check—not an AI detector or authorship verdict.</span></div>
-          </div>
           <div className="findings-heading">
             <AgentAvatar agent={activeAgent} />
             <div><span>Agent assessment</span><h2>{activeAgent.name}</h2></div>

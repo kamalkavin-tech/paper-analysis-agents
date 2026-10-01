@@ -48,3 +48,15 @@ npm run preview
 ## Responsible authorship support
 
 Scholaris can flag formulaic or generic language and recommend more specific, evidence-grounded writing. It does not label a manuscript as human- or AI-authored, promise to “remove AI content,” or guarantee an AI-detector result. Authors remain responsible for the claims, sources, analysis, and final prose.
+
+The authorship-pattern review provides:
+
+- A clearly labelled formulaic-writing indicator (not an AI-authorship percentage)
+- The number and percentage of manuscript words inside flagged passages
+- Exact sentences and triggering words or phrases
+- A reason for every flag, including generic framing, inflated wording, dense sentences, and unattributed generalizations
+- Passage-level suggested revisions
+- An editable full-manuscript revision studio
+- Copy, TXT, and Word export for the assisted revision draft
+
+The revision workflow simplifies configured formulaic phrases while preserving the manuscript for author review. It does not invent personal experience, new evidence, citations, technical details, or experimental findings to make text appear human-authored.
