@@ -505,6 +505,7 @@ function WritingPatternPanel({ report }) {
   const [revisedText, setRevisedText] = useState(report.sourceText);
   const [revisionApplied, setRevisionApplied] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [downloadState, setDownloadState] = useState({ status: 'idle', message: '' });
   const visiblePassages = showAll ? analysis.passages : analysis.passages.slice(0, 5);
 
   const copyRevision = async () => {
@@ -513,30 +514,40 @@ function WritingPatternPanel({ report }) {
     window.setTimeout(() => setCopied(false), 1800);
   };
 
-  const downloadRevision = async (format) => {
-    if (format === 'txt') {
-      const blob = new Blob([revisedText], { type: 'text/plain;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = 'scholaris-assisted-revision.txt';
-      link.click();
-      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-      return;
-    }
-    const { Document: DocxDocument, HeadingLevel, Packer, Paragraph } = await import('docx');
-    const paragraphs = revisedText.split(/\n+/).filter(Boolean);
-    const document = new DocxDocument({ sections: [{ properties: {}, children: [
-      new Paragraph({ text: report.title, heading: HeadingLevel.TITLE }),
-      ...paragraphs.map((paragraph) => new Paragraph(paragraph)),
-    ] }] });
-    const blob = await Packer.toBlob(document);
+  const triggerRevisionDownload = (blob, fileName) => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'scholaris-assisted-revision.docx';
+    link.download = fileName;
+    link.style.display = 'none';
+    document.body.appendChild(link);
     link.click();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 5000);
+  };
+
+  const downloadRevision = async (format) => {
+    setDownloadState({ status: 'working', message: `Preparing ${format.toUpperCase()}…` });
+    try {
+      if (!revisedText.trim()) throw new Error('The revision editor is empty.');
+      if (format === 'txt') {
+        triggerRevisionDownload(
+          new Blob([revisedText], { type: 'text/plain;charset=utf-8' }),
+          'scholaris-revised-manuscript.txt',
+        );
+      } else {
+        const { Document: DocxDocument, HeadingLevel, Packer, Paragraph } = await import('docx');
+        const paragraphs = revisedText.split(/\n+/).filter(Boolean);
+        const document = new DocxDocument({ sections: [{ properties: {}, children: [
+          new Paragraph({ text: report.title, heading: HeadingLevel.TITLE }),
+          ...paragraphs.map((paragraph) => new Paragraph({ text: paragraph })),
+        ] }] });
+        triggerRevisionDownload(await Packer.toBlob(document), 'scholaris-revised-manuscript.docx');
+      }
+      setDownloadState({ status: 'success', message: `${format.toUpperCase()} downloaded. Check your Downloads folder.` });
+    } catch (error) {
+      setDownloadState({ status: 'error', message: error instanceof Error ? error.message : 'The revised paper could not be downloaded.' });
+    }
   };
 
   return (
@@ -594,6 +605,12 @@ function WritingPatternPanel({ report }) {
           </div>
           {analysis.automaticReplacements === 0 && <div className="manual-revision-notice"><PenLine size={15} /><span>No phrase can be replaced automatically without risking a change to the research meaning. Use the highlighted guidance on the left and type directly in the editor below.</span></div>}
           <p className="revision-note">This box contains the complete manuscript and is directly editable. Review every change and add your own reasoning, evidence, and disciplinary voice.</p>
+          <div className="revision-download-bar">
+            <div><Download size={17} /><span><strong>Download revised manuscript</strong><small>Includes the current text in the editor below</small></span></div>
+            <button disabled={downloadState.status === 'working'} onClick={() => downloadRevision('txt')}>Download TXT</button>
+            <button className="word-download" disabled={downloadState.status === 'working'} onClick={() => downloadRevision('docx')}>Download Word</button>
+          </div>
+          {downloadState.message && <div className={`download-feedback ${downloadState.status}`}>{downloadState.status === 'success' ? <CheckCircle2 size={15} /> : downloadState.status === 'error' ? <AlertTriangle size={15} /> : <Clock3 size={15} />}<span>{downloadState.message}</span></div>}
           <textarea value={revisedText} onChange={(event) => setRevisedText(event.target.value)} aria-label="Assisted revision draft" />
           <div className="revision-actions">
             <button onClick={() => { setRevisedText(report.sourceText); setRevisionApplied(false); }}>Restore original</button>
