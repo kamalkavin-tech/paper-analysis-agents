@@ -11,7 +11,7 @@ Scholaris is a local-first research-paper review workspace. It coordinates six d
 5. Journal Reviewer — publication structure and limitations
 6. Quality Assurance — cross-section and citation checks
 
-The current version performs deterministic textual and structural screening in the browser. It does not claim to verify facts, source databases, experimental data, or plagiarism.
+The current version performs deterministic textual and structural screening in the browser. It does not claim to verify facts, source databases, experimental data, plagiarism, or AI authorship. Formulaic-language findings are revision signals, not an AI-content percentage.
 
 ## Run locally
 
@@ -29,10 +29,22 @@ npm run build
 npm run preview
 ```
 
-## Supported input
+## Supported imports
 
 - Paste manuscript text directly
-- Upload plain-text (`.txt`) or Markdown (`.md`) files
-- Export the completed review as a text report
+- PDF (`.pdf`, including explicit warnings for image-only files that need OCR)
+- Microsoft Word (`.docx`)
+- Plain text and Markdown (`.txt`, `.md`, `.markdown`)
+- HTML and rich text (`.html`, `.htm`, `.rtf`)
+- Delimited text (`.csv`, `.tsv`)
 
-PDF and Word extraction are intentionally not simulated in this version. Those formats require a dedicated parser before reliable review.
+## Supported exports
+
+- PDF and Microsoft Word (`.pdf`, `.docx`)
+- Plain text and Markdown (`.txt`, `.md`)
+- Standalone HTML (`.html`)
+- Structured data (`.json`, `.csv`)
+
+## Responsible authorship support
+
+Scholaris can flag formulaic or generic language and recommend more specific, evidence-grounded writing. It does not label a manuscript as human- or AI-authored, promise to “remove AI content,” or guarantee an AI-detector result. Authors remain responsible for the claims, sources, analysis, and final prose.

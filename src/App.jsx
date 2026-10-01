@@ -83,6 +83,77 @@ References
 [2] Author, B., and Author, C. (2023). Language models for scholarly editing. Computing Reviews, 8(1), 20–39.
 [3] Author, D. (2024). Evaluating traceability in AI-assisted peer review. Research Methods Quarterly, 4(3), 44–61.`;
 
+const importFormats = [
+  { extension: 'pdf', label: 'PDF' },
+  { extension: 'docx', label: 'Word' },
+  { extension: 'txt', label: 'Text' },
+  { extension: 'md', label: 'Markdown' },
+  { extension: 'html', label: 'HTML' },
+  { extension: 'rtf', label: 'RTF' },
+  { extension: 'csv', label: 'CSV / TSV' },
+];
+
+const exportFormats = [
+  { value: 'pdf', label: 'PDF document' },
+  { value: 'docx', label: 'Word document' },
+  { value: 'txt', label: 'Plain text' },
+  { value: 'md', label: 'Markdown' },
+  { value: 'html', label: 'HTML page' },
+  { value: 'json', label: 'Structured JSON' },
+  { value: 'csv', label: 'CSV table' },
+];
+
+function fileExtension(name) {
+  return name.toLowerCase().split('.').pop();
+}
+
+function htmlToText(source) {
+  const document = new DOMParser().parseFromString(source, 'text/html');
+  document.querySelectorAll('script, style, nav, noscript').forEach((node) => node.remove());
+  return document.body?.innerText || document.body?.textContent || '';
+}
+
+function rtfToText(source) {
+  return source
+    .replace(/\\par[d]?/g, '\n')
+    .replace(/\\'[0-9a-fA-F]{2}/g, (code) => String.fromCharCode(Number.parseInt(code.slice(2), 16)))
+    .replace(/\\[a-z]+-?\d* ?/gi, '')
+    .replace(/[{}]/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+async function extractPdfText(arrayBuffer) {
+  const [pdfjs, workerModule] = await Promise.all([
+    import('pdfjs-dist'),
+    import('pdfjs-dist/build/pdf.worker.min.mjs?url'),
+  ]);
+  pdfjs.GlobalWorkerOptions.workerSrc = workerModule.default;
+  const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+  const pages = [];
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    const page = await pdf.getPage(pageNumber);
+    const content = await page.getTextContent();
+    pages.push(content.items.map((item) => item.str).join(' '));
+  }
+  return pages.join('\n\n');
+}
+
+async function extractManuscript(file) {
+  const extension = fileExtension(file.name);
+  if (extension === 'pdf') return extractPdfText(await file.arrayBuffer());
+  if (extension === 'docx') {
+    const mammoth = (await import('mammoth')).default;
+    const result = await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() });
+    return result.value;
+  }
+  const source = await file.text();
+  if (extension === 'html' || extension === 'htm') return htmlToText(source);
+  if (extension === 'rtf') return rtfToText(source);
+  if (['txt', 'md', 'markdown', 'csv', 'tsv'].includes(extension)) return source;
+  throw new Error('This file type is not supported. Choose PDF, DOCX, TXT, Markdown, HTML, RTF, CSV, or TSV.');
+}
+
 function countMatches(text, regex) {
   return (text.match(regex) || []).length;
 }
@@ -95,6 +166,7 @@ function analyzePaper(text) {
   const numbers = countMatches(text, /\b\d+(?:\.\d+)?%?\b/g);
   const hedges = countMatches(text, /\b(?:may|might|suggests?|indicates?|appears?|likely|potentially)\b/gi);
   const strongClaims = countMatches(text, /\b(?:proves?|always|never|guarantees?|undeniably|without doubt|all studies)\b/gi);
+  const formulaicSignals = countMatches(text, /\b(?:in today'?s rapidly evolving|it is important to note|it is worth noting|delve into|complex landscape|multifaceted|pivotal role|plays? a crucial role|underscore(?:s|d)? the importance|in the realm of|moreover|furthermore|in conclusion)\b/gi);
   const sections = sectionMatchers.filter(([, regex]) => regex.test(text)).map(([name]) => name);
   const has = (section) => sections.includes(section);
   const score = Math.max(28, Math.min(96,
@@ -130,6 +202,9 @@ function analyzePaper(text) {
       /\b(?:we propose|this study (?:proposes|introduces|develops)|our contribution|novel)\b/i.test(text)
         ? { level: 'strength', title: 'Contribution language is explicit', detail: 'The manuscript distinguishes a proposed contribution; its novelty still requires literature-based verification.' }
         : { level: 'minor', title: 'Original contribution is not isolated', detail: 'State precisely what the study contributes beyond established knowledge.' },
+      formulaicSignals > 2
+        ? { level: 'minor', title: 'Formulaic language patterns detected', detail: `${formulaicSignals} common template-like phrase${formulaicSignals === 1 ? '' : 's'} detected. Replace them with specific reasoning grounded in the study; this is not an AI-authorship determination.` }
+        : { level: 'strength', title: 'Limited formulaic phrasing', detail: `${formulaicSignals} common template-like phrase${formulaicSignals === 1 ? '' : 's'} detected. This observation cannot establish whether AI was used.` },
       { level: 'note', title: 'Similarity cannot be inferred from prose alone', detail: 'A source-database comparison is required for a defensible similarity assessment.' },
     ],
     domain: [
@@ -172,6 +247,7 @@ function analyzePaper(text) {
     sentences: sentences.length,
     avgSentence,
     citations,
+    formulaicSignals,
     sections,
     score: Math.round(score),
     issueCount,
@@ -189,7 +265,7 @@ function AgentAvatar({ agent, size = 'normal' }) {
   return <span className={`agent-avatar ${agent.color} ${size}`}><Icon size={size === 'small' ? 15 : 18} /></span>;
 }
 
-function EmptyWorkspace({ text, setText, onAnalyze, onUpload, fileName }) {
+function EmptyWorkspace({ text, setText, onAnalyze, onUpload, fileName, importError, importing }) {
   const fileInput = useRef(null);
   return (
     <main className="workspace empty-workspace">
@@ -214,15 +290,27 @@ function EmptyWorkspace({ text, setText, onAnalyze, onUpload, fileName }) {
           />
           <div className="input-actions">
             <button className="upload-button" onClick={() => fileInput.current?.click()}>
-              <Upload size={17} /> {fileName || 'Upload .txt or .md'}
+              <Upload size={17} /> {importing ? 'Extracting document…' : fileName || 'Import manuscript'}
             </button>
-            <input ref={fileInput} type="file" accept=".txt,.md,text/plain,text/markdown" hidden onChange={onUpload} />
+            <input
+              ref={fileInput}
+              type="file"
+              accept=".pdf,.docx,.txt,.md,.markdown,.html,.htm,.rtf,.csv,.tsv,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown,text/html,text/rtf,text/csv,text/tab-separated-values"
+              hidden
+              onChange={onUpload}
+            />
             <span className="word-count">{text.trim() ? text.trim().split(/\s+/).length.toLocaleString() : 0} words</span>
-            <button className="analyze-button" disabled={text.trim().length < 120} onClick={onAnalyze}>
+            <button className="analyze-button" disabled={text.trim().length < 120 || importing} onClick={onAnalyze}>
               Begin structured review <ArrowRight size={17} />
             </button>
           </div>
         </div>
+
+        <div className="format-support" aria-label="Supported import formats">
+          <span>Import</span>
+          {importFormats.map((format) => <i key={format.extension}>{format.label}</i>)}
+        </div>
+        {importError && <div className="import-error"><AlertTriangle size={16} /> {importError}</div>}
 
         <div className="agent-strip">
           <div className="agent-strip-label"><Users size={16} /> Your review panel</div>
@@ -280,12 +368,13 @@ function LoadingReview({ activeStep }) {
 
 function Report({ report, onNewReview }) {
   const [selected, setSelected] = useState('scholar');
+  const [exportFormat, setExportFormat] = useState('pdf');
+  const [exporting, setExporting] = useState(false);
   const activeAgent = agents.find((agent) => agent.id === selected);
   const findings = report.findings[selected];
 
-  const exportReview = () => {
-    const lines = [
-      `SCHOLARIS STRUCTURED REVIEW`,
+  const reviewLines = () => [
+      'SCHOLARIS STRUCTURED REVIEW',
       report.title,
       `Overall readiness indicator: ${report.score}/100`,
       `Words: ${report.words} | Citations detected: ${report.citations} | Sections: ${report.sections.join(', ') || 'None detected'}`,
@@ -297,13 +386,122 @@ function Report({ report, onNewReview }) {
       ]),
       'Important: This computational review is a screening aid. Verify all facts, citations, technical claims, and results before submission.',
     ];
-    const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
+
+  const structuredReview = () => ({
+    generatedBy: 'Scholaris Review Protocol v1.0',
+    manuscript: {
+      title: report.title,
+      words: report.words,
+      sentences: report.sentences,
+      averageSentenceWords: report.avgSentence,
+      citationMarkers: report.citations,
+      formulaicLanguageSignals: report.formulaicSignals,
+      sectionsDetected: report.sections,
+    },
+    readinessIndicator: report.score,
+    actionItemCount: report.issueCount,
+    assessments: agents.map((agent) => ({
+      agent: agent.name,
+      focus: agent.short,
+      findings: report.findings[agent.id],
+    })),
+    disclaimer: 'This computational review is a screening aid. Verify all facts, citations, technical claims, and results before submission.',
+  });
+
+  const downloadBlob = (blob, extension) => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'scholaris-review.txt';
+    link.download = `scholaris-review.${extension}`;
     link.click();
-    URL.revokeObjectURL(url);
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const exportReview = async () => {
+    setExporting(true);
+    try {
+      const data = structuredReview();
+      const textReport = reviewLines().join('\n');
+
+      if (exportFormat === 'txt') {
+        downloadBlob(new Blob([textReport], { type: 'text/plain;charset=utf-8' }), 'txt');
+      } else if (exportFormat === 'json') {
+        downloadBlob(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8' }), 'json');
+      } else if (exportFormat === 'md') {
+        const markdown = [
+          '# Scholaris Structured Review',
+          `## ${report.title}`,
+          `**Readiness indicator:** ${report.score}/100  `,
+          `**Words:** ${report.words} · **Citation markers:** ${report.citations} · **Sections:** ${report.sections.join(', ') || 'None detected'}`,
+          '',
+          ...agents.flatMap((agent) => [
+            `## ${agent.name}`,
+            ...report.findings[agent.id].map((finding) => `- **${finding.level.toUpperCase()} — ${finding.title}:** ${finding.detail}`),
+            '',
+          ]),
+          '> **Verification notice:** This computational review is a screening aid. Verify all facts, citations, technical claims, and results before submission.',
+        ].join('\n');
+        downloadBlob(new Blob([markdown], { type: 'text/markdown;charset=utf-8' }), 'md');
+      } else if (exportFormat === 'csv') {
+        const escapeCsv = (value) => `"${String(value).replaceAll('"', '""')}"`;
+        const rows = [['Agent', 'Focus', 'Level', 'Finding', 'Detail']];
+        agents.forEach((agent) => report.findings[agent.id].forEach((finding) => {
+          rows.push([agent.name, agent.short, finding.level, finding.title, finding.detail]);
+        }));
+        downloadBlob(new Blob([rows.map((row) => row.map(escapeCsv).join(',')).join('\n')], { type: 'text/csv;charset=utf-8' }), 'csv');
+      } else if (exportFormat === 'html') {
+        const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' })[character]);
+        const sections = agents.map((agent) => `<section><h2>${escapeHtml(agent.name)}</h2><p class="focus">${escapeHtml(agent.short)}</p><ul>${report.findings[agent.id].map((finding) => `<li><strong>${escapeHtml(finding.level.toUpperCase())} — ${escapeHtml(finding.title)}</strong><p>${escapeHtml(finding.detail)}</p></li>`).join('')}</ul></section>`).join('');
+        const html = `<!doctype html><html><head><meta charset="utf-8"><title>Scholaris Review</title><style>body{max-width:850px;margin:48px auto;padding:0 28px;color:#20211e;font:16px/1.6 Georgia,serif}h1{font-size:34px}h2{margin-top:34px;border-bottom:1px solid #ddd;padding-bottom:8px}.meta,.focus{color:#666}.notice{margin-top:40px;padding:16px;background:#f4edda;border-left:4px solid #b68a25}li{margin:14px 0}li p{margin:3px 0}</style></head><body><p>Scholaris Structured Review</p><h1>${escapeHtml(report.title)}</h1><p class="meta">Readiness indicator: ${report.score}/100 · Words: ${report.words} · Citation markers: ${report.citations}</p>${sections}<p class="notice"><strong>Verification notice:</strong> ${escapeHtml(data.disclaimer)}</p></body></html>`;
+        downloadBlob(new Blob([html], { type: 'text/html;charset=utf-8' }), 'html');
+      } else if (exportFormat === 'docx') {
+        const { Document: DocxDocument, HeadingLevel, Packer, Paragraph, TextRun } = await import('docx');
+        const children = [
+          new Paragraph({ text: 'SCHOLARIS STRUCTURED REVIEW', heading: HeadingLevel.TITLE }),
+          new Paragraph({ text: report.title, heading: HeadingLevel.HEADING_1 }),
+          new Paragraph({ children: [new TextRun({ text: `Readiness indicator: ${report.score}/100`, bold: true })] }),
+          new Paragraph(`Words: ${report.words} | Citation markers: ${report.citations} | Sections: ${report.sections.join(', ') || 'None detected'}`),
+        ];
+        agents.forEach((agent) => {
+          children.push(new Paragraph({ text: agent.name, heading: HeadingLevel.HEADING_2 }));
+          report.findings[agent.id].forEach((finding) => children.push(new Paragraph({
+            bullet: { level: 0 },
+            children: [new TextRun({ text: `${finding.level.toUpperCase()} — ${finding.title}: `, bold: true }), new TextRun(finding.detail)],
+          })));
+        });
+        children.push(new Paragraph({ children: [new TextRun({ text: `Verification notice: ${data.disclaimer}`, italics: true })] }));
+        const document = new DocxDocument({ sections: [{ properties: {}, children }] });
+        downloadBlob(await Packer.toBlob(document), 'docx');
+      } else if (exportFormat === 'pdf') {
+        const { jsPDF } = await import('jspdf');
+        const document = new jsPDF({ unit: 'pt', format: 'a4' });
+        const margin = 52;
+        const pageHeight = document.internal.pageSize.getHeight();
+        let y = 58;
+        const addLines = (content, size = 10, bold = false, gap = 5) => {
+          document.setFont('helvetica', bold ? 'bold' : 'normal');
+          document.setFontSize(size);
+          const lines = document.splitTextToSize(content, document.internal.pageSize.getWidth() - margin * 2);
+          lines.forEach((line) => {
+            if (y > pageHeight - 52) { document.addPage(); y = 52; }
+            document.text(line, margin, y);
+            y += size + gap;
+          });
+        };
+        addLines('SCHOLARIS STRUCTURED REVIEW', 9, true, 7);
+        addLines(report.title, 18, true, 8);
+        addLines(`Readiness indicator: ${report.score}/100 | Words: ${report.words} | Citation markers: ${report.citations}`, 9, false, 14);
+        agents.forEach((agent) => {
+          addLines(agent.name, 13, true, 7);
+          report.findings[agent.id].forEach((finding) => addLines(`${finding.level.toUpperCase()} — ${finding.title}: ${finding.detail}`, 9, false, 5));
+          y += 8;
+        });
+        addLines(`Verification notice: ${data.disclaimer}`, 9, true, 5);
+        document.save('scholaris-review.pdf');
+      }
+    } finally {
+      setExporting(false);
+    }
   };
 
   return (
@@ -316,7 +514,12 @@ function Report({ report, onNewReview }) {
         </div>
         <div className="report-actions">
           <button className="secondary-button" onClick={onNewReview}><Plus size={16} /> New review</button>
-          <button className="export-button" onClick={exportReview}><Download size={16} /> Export review</button>
+          <div className="export-control">
+            <select value={exportFormat} onChange={(event) => setExportFormat(event.target.value)} aria-label="Export format">
+              {exportFormats.map((format) => <option value={format.value} key={format.value}>{format.label}</option>)}
+            </select>
+            <button className="export-button" disabled={exporting} onClick={exportReview}><Download size={16} /> {exporting ? 'Preparing…' : 'Export'}</button>
+          </div>
         </div>
       </section>
 
@@ -348,6 +551,10 @@ function Report({ report, onNewReview }) {
         </aside>
 
         <article className="findings-panel">
+          <div className="authorship-guidance">
+            <Highlighter size={18} />
+            <div><strong>Authorship guidance</strong><span>{report.formulaicSignals} formulaic-language signal{report.formulaicSignals === 1 ? '' : 's'} found. This is a writing-pattern check—not an AI detector or authorship verdict.</span></div>
+          </div>
           <div className="findings-heading">
             <AgentAvatar agent={activeAgent} />
             <div><span>Agent assessment</span><h2>{activeAgent.name}</h2></div>
@@ -372,6 +579,8 @@ function Report({ report, onNewReview }) {
 function App() {
   const [text, setText] = useState('');
   const [fileName, setFileName] = useState('');
+  const [importError, setImportError] = useState('');
+  const [importing, setImporting] = useState(false);
   const [view, setView] = useState('new');
   const [activeStep, setActiveStep] = useState(0);
   const [report, setReport] = useState(null);
@@ -381,8 +590,24 @@ function App() {
   const handleUpload = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    setFileName(file.name);
-    setText(await file.text());
+    setImportError('');
+    setImporting(true);
+    try {
+      const extracted = (await extractManuscript(file)).trim();
+      if (extracted.length < 120) {
+        throw new Error(fileExtension(file.name) === 'pdf'
+          ? 'Very little text could be extracted. This may be an image-only PDF that requires OCR.'
+          : 'The document contains too little extractable text for a structured review.');
+      }
+      setFileName(file.name);
+      setText(extracted);
+    } catch (error) {
+      setFileName('');
+      setImportError(error instanceof Error ? error.message : 'The document could not be imported.');
+    } finally {
+      setImporting(false);
+      event.target.value = '';
+    }
   };
 
   const handleAnalyze = () => {
@@ -401,6 +626,7 @@ function App() {
   const newReview = () => {
     setText('');
     setFileName('');
+    setImportError('');
     setReport(null);
     setView('new');
   };
@@ -437,7 +663,7 @@ function App() {
           </div>
         </header>
 
-        {view === 'new' && <EmptyWorkspace text={text} setText={setText} onAnalyze={handleAnalyze} onUpload={handleUpload} fileName={fileName} />}
+        {view === 'new' && <EmptyWorkspace text={text} setText={setText} onAnalyze={handleAnalyze} onUpload={handleUpload} fileName={fileName} importError={importError} importing={importing} />}
         {view === 'loading' && <LoadingReview activeStep={activeStep} />}
         {view === 'report' && report && <Report report={report} onNewReview={newReview} />}
         <footer><span>Scholaris Review Protocol v1.0</span><span>Human verification is required before publication.</span></footer>
