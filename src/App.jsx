@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowRight,
@@ -530,10 +530,27 @@ function WritingPatternPanel({ report }) {
   const [revisionApplied, setRevisionApplied] = useState(false);
   const [copied, setCopied] = useState(false);
   const [downloadState, setDownloadState] = useState({ status: 'idle', message: '' });
+  const [modelHealth, setModelHealth] = useState({ loading: true, configured: false, model: '' });
+  const [authorSample, setAuthorSample] = useState('');
+  const [revisionInstructions, setRevisionInstructions] = useState('Preserve my technical terminology and concise academic tone.');
+  const [semanticState, setSemanticState] = useState({ status: 'idle', message: '', result: null });
   const visiblePassages = showAll ? analysis.passages : analysis.passages.slice(0, 5);
   const currentDraftAnalysis = useMemo(() => analyzeWritingPatterns(revisedText), [revisedText]);
   const indicatorChange = analysis.indicator - currentDraftAnalysis.indicator;
   const draftChanged = revisedText !== report.sourceText;
+
+  useEffect(() => {
+    let active = true;
+    fetch('/api/health')
+      .then((response) => response.json())
+      .then((health) => {
+        if (active) setModelHealth({ loading: false, configured: Boolean(health.modelConfigured), model: health.model || '' });
+      })
+      .catch(() => {
+        if (active) setModelHealth({ loading: false, configured: false, model: '' });
+      });
+    return () => { active = false; };
+  }, []);
 
   const copyRevision = async () => {
     await navigator.clipboard.writeText(revisedText);
@@ -544,6 +561,29 @@ function WritingPatternPanel({ report }) {
   const applyNaturalRevision = () => {
     const updatedDraft = reviseFormulaicText(report.sourceText);
     setRevisedText(updatedDraft);
+    setRevisionApplied(true);
+    window.setTimeout(() => document.getElementById('revision-editor')?.focus(), 50);
+  };
+
+  const generateSemanticRevision = async () => {
+    setSemanticState({ status: 'working', message: 'The revision and preservation checks are running…', result: null });
+    try {
+      const response = await fetch('/api/revise', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ manuscript: report.sourceText, authorSample, instructions: revisionInstructions }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'The semantic revision request failed.');
+      setSemanticState({ status: 'success', message: 'Semantic revision ready for author review.', result: payload });
+    } catch (error) {
+      setSemanticState({ status: 'error', message: error instanceof Error ? error.message : 'The semantic revision request failed.', result: null });
+    }
+  };
+
+  const loadSemanticRevision = () => {
+    if (!semanticState.result?.revisedText) return;
+    setRevisedText(semanticState.result.revisedText);
     setRevisionApplied(true);
     window.setTimeout(() => document.getElementById('revision-editor')?.focus(), 50);
   };
@@ -624,6 +664,36 @@ function WritingPatternPanel({ report }) {
 
         <div className="revision-studio" id="revision-studio">
           <div className="subsection-heading"><div><span>02</span><strong>Assisted revision draft</strong></div><small>Editable</small></div>
+          <div className="semantic-revision-card">
+            <div className="semantic-heading">
+              <div><Sparkles size={18} /><span><strong>Author-voice semantic revision</strong><small>Model-backed rewriting with claim-preservation checks</small></span></div>
+              <i className={modelHealth.configured ? 'ready' : ''}>{modelHealth.loading ? 'Checking…' : modelHealth.configured ? `${modelHealth.model} ready` : 'API key required'}</i>
+            </div>
+            <label>
+              <span>Your original writing sample <b>{authorSample.length.toLocaleString()} characters</b></span>
+              <textarea className="author-sample-input" value={authorSample} onChange={(event) => setAuthorSample(event.target.value)} placeholder="Paste 2–5 paragraphs written entirely by you. Scholaris uses this sample to calibrate voice, sentence rhythm, and terminology." />
+            </label>
+            <label>
+              <span>Revision instructions</span>
+              <input value={revisionInstructions} onChange={(event) => setRevisionInstructions(event.target.value)} />
+            </label>
+            {!modelHealth.configured && !modelHealth.loading && <div className="model-setup-note"><Settings size={15} /><span>Add <code>OPENAI_API_KEY</code> to the project’s <code>.env</code> file and restart the site to enable semantic revision.</span></div>}
+            <button className="semantic-generate-button" disabled={!modelHealth.configured || authorSample.trim().length < 300 || semanticState.status === 'working'} onClick={generateSemanticRevision}>
+              <Sparkles size={15} /> {semanticState.status === 'working' ? 'Revising and verifying…' : 'Generate evidence-preserving revision'}
+            </button>
+            {semanticState.message && <div className={`semantic-feedback ${semanticState.status}`}>{semanticState.status === 'success' ? <CheckCircle2 size={15} /> : semanticState.status === 'error' ? <AlertTriangle size={15} /> : <Clock3 size={15} />}<span>{semanticState.message}</span></div>}
+            {semanticState.result && <div className="semantic-result">
+              <p>{semanticState.result.summary}</p>
+              <div className="preservation-checks">
+                <span className={semanticState.result.preservation.citationsPreserved ? 'pass' : 'fail'}>{semanticState.result.preservation.citationsPreserved ? <Check size={13} /> : <X size={13} />} Citations</span>
+                <span className={semanticState.result.preservation.numbersPreserved ? 'pass' : 'fail'}>{semanticState.result.preservation.numbersPreserved ? <Check size={13} /> : <X size={13} />} Numbers</span>
+                <span className={semanticState.result.preservation.technicalTermsPreserved ? 'pass' : 'fail'}>{semanticState.result.preservation.technicalTermsPreserved ? <Check size={13} /> : <X size={13} />} Terminology</span>
+                <span>{semanticState.result.changes.length} documented changes</span>
+              </div>
+              {semanticState.result.preservation.warnings.length > 0 && <ul>{semanticState.result.preservation.warnings.map((warning, index) => <li key={`${warning}-${index}`}>{warning}</li>)}</ul>}
+              <button onClick={loadSemanticRevision}><PenLine size={15} /> Load verified revision into editor</button>
+            </div>}
+          </div>
           <div className={`apply-revision-box ${revisionApplied ? 'applied' : ''}`}>
             <div>
               <WandSparkles size={18} />

@@ -20,7 +20,20 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:3000`.
+The frontend runs on `http://localhost:3000` and the API runs on `http://localhost:4000`.
+
+### Enable semantic revision
+
+Copy the environment template and add a server-side OpenAI API key:
+
+```bash
+copy .env.example .env
+npm run dev
+```
+
+Then set `OPENAI_API_KEY` in `.env`. Never add the key to frontend code or use a `VITE_` prefix.
+
+Without an API key, local structural analysis, rule-based revision, imports, and exports continue to work. Author-voice semantic revision remains disabled and the interface explains how to enable it.
 
 ## Production build
 
@@ -60,6 +73,17 @@ The authorship-pattern review provides:
 - A live original-versus-revised comparison that recalculates while the author edits
 - Complementary AI-pattern and natural-style heuristics, explicitly labelled as non-authorship estimates
 - Copy, TXT, and Word export for the assisted revision draft
+
+## Model-backed author-voice revision
+
+When configured, the local API uses the OpenAI Responses API with Structured Outputs to:
+
+- Calibrate revisions from an original author-writing sample
+- Return a complete revised manuscript plus documented changes
+- Preserve section order and technical terminology
+- Refuse to invent sources, findings, methods, or contributions
+- Compare citation and numerical tokens before returning the result
+- Require the author to load and approve the generated revision before export
 
 The revision workflow simplifies configured formulaic phrases while preserving the manuscript for author review. It does not invent personal experience, new evidence, citations, technical details, or experimental findings to make text appear human-authored.
 
