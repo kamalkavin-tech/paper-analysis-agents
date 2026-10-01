@@ -57,6 +57,10 @@ The authorship-pattern review provides:
 - A reason for every flag, including generic framing, inflated wording, dense sentences, and unattributed generalizations
 - Passage-level suggested revisions
 - An editable full-manuscript revision studio
+- A live original-versus-revised comparison that recalculates while the author edits
+- Complementary AI-pattern and natural-style heuristics, explicitly labelled as non-authorship estimates
 - Copy, TXT, and Word export for the assisted revision draft
 
 The revision workflow simplifies configured formulaic phrases while preserving the manuscript for author review. It does not invent personal experience, new evidence, citations, technical details, or experimental findings to make text appear human-authored.
+
+Third-party AI detectors can produce materially different scores for the same text and can even assign a higher score after ordinary editing. Scholaris therefore does not optimize for or promise a result from ZeroGPT or another detector. Its live comparison uses one consistent, inspectable set of textual rules so authors can see why the local score changes.

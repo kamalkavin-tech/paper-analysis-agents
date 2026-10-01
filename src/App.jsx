@@ -180,6 +180,15 @@ const writingPatterns = [
   { regex: /\bdue to the fact that\b/gi, category: 'Wordy causal phrase', weight: 2, replacement: 'because' },
   { regex: /\bwith the aim of\b/gi, category: 'Wordy purpose phrase', weight: 1, replacement: 'to' },
   { regex: /\bserves? as (?:a|an|the)\b/gi, category: 'Generic framing', weight: 1, replacement: 'is a' },
+  { regex: /\bit (?:can be observed|should be noted|must be emphasized) that\b/gi, category: 'Detached meta-commentary', weight: 2, replacement: '' },
+  { regex: /\bthe purpose of this (?:study|paper|research) is to\b/gi, category: 'Wordy purpose statement', weight: 2, replacement: 'This study aims to' },
+  { regex: /\b(?:is|are) capable of\b/gi, category: 'Wordy capability phrase', weight: 1, replacement: 'can' },
+  { regex: /\bthe majority of\b/gi, category: 'Wordy quantity phrase', weight: 1, replacement: 'most' },
+  { regex: /\ba number of\b/gi, category: 'Unspecific quantity', weight: 1, replacement: 'several' },
+  { regex: /\bat this point in time\b/gi, category: 'Redundant time phrase', weight: 2, replacement: 'currently' },
+  { regex: /\bfor the purpose of\b/gi, category: 'Wordy purpose phrase', weight: 1, replacement: 'to' },
+  { regex: /\bhas been shown to be\b/gi, category: 'Indirect construction', weight: 2, replacement: 'is' },
+  { regex: /\b(?:completely|entirely) eliminate\b/gi, category: 'Unqualified absolute claim', weight: 2, replacement: 'reduce' },
 ];
 
 function splitSentencesWithPunctuation(text) {
@@ -507,6 +516,8 @@ function WritingPatternPanel({ report }) {
   const [copied, setCopied] = useState(false);
   const [downloadState, setDownloadState] = useState({ status: 'idle', message: '' });
   const visiblePassages = showAll ? analysis.passages : analysis.passages.slice(0, 5);
+  const currentDraftAnalysis = useMemo(() => analyzeWritingPatterns(revisedText), [revisedText]);
+  const indicatorChange = analysis.indicator - currentDraftAnalysis.indicator;
 
   const copyRevision = async () => {
     await navigator.clipboard.writeText(revisedText);
@@ -536,10 +547,9 @@ function WritingPatternPanel({ report }) {
           'scholaris-revised-manuscript.txt',
         );
       } else {
-        const { Document: DocxDocument, HeadingLevel, Packer, Paragraph } = await import('docx');
+        const { Document: DocxDocument, Packer, Paragraph } = await import('docx');
         const paragraphs = revisedText.split(/\n+/).filter(Boolean);
         const document = new DocxDocument({ sections: [{ properties: {}, children: [
-          new Paragraph({ text: report.title, heading: HeadingLevel.TITLE }),
           ...paragraphs.map((paragraph) => new Paragraph({ text: paragraph })),
         ] }] });
         triggerRevisionDownload(await Packer.toBlob(document), 'scholaris-revised-manuscript.docx');
@@ -604,6 +614,25 @@ function WritingPatternPanel({ report }) {
             </button>
           </div>
           {analysis.automaticReplacements === 0 && <div className="manual-revision-notice"><PenLine size={15} /><span>No phrase can be replaced automatically without risking a change to the research meaning. Use the highlighted guidance on the left and type directly in the editor below.</span></div>}
+          <div className="live-comparison">
+            <div className="comparison-title">
+              <div><BarChart3 size={17} /><span><strong>Live writing-pattern comparison</strong><small>Recalculates automatically as the revision changes</small></span></div>
+              <i className={indicatorChange > 0 ? 'improved' : indicatorChange < 0 ? 'increased' : ''}>{indicatorChange > 0 ? `−${indicatorChange} points` : indicatorChange < 0 ? `+${Math.abs(indicatorChange)} points` : 'No change yet'}</i>
+            </div>
+            <div className="comparison-grid">
+              <div>
+                <span>Original manuscript</span>
+                <div className="comparison-values"><strong>{analysis.indicator}%<small>AI-pattern heuristic</small></strong><b>{100 - analysis.indicator}%<small>Natural-style heuristic</small></b></div>
+                <div className="comparison-track"><i style={{ width: `${analysis.indicator}%` }} /></div>
+              </div>
+              <div>
+                <span>Current revised draft</span>
+                <div className="comparison-values"><strong>{currentDraftAnalysis.indicator}%<small>AI-pattern heuristic</small></strong><b>{100 - currentDraftAnalysis.indicator}%<small>Natural-style heuristic</small></b></div>
+                <div className="comparison-track current"><i style={{ width: `${currentDraftAnalysis.indicator}%` }} /></div>
+              </div>
+            </div>
+            <p>These percentages describe configured textual patterns; they do not establish whether a human or AI wrote the manuscript and will not match every third-party detector.</p>
+          </div>
           <p className="revision-note">This box contains the complete manuscript and is directly editable. Review every change and add your own reasoning, evidence, and disciplinary voice.</p>
           <div className="revision-download-bar">
             <div><Download size={17} /><span><strong>Download revised manuscript</strong><small>Includes the current text in the editor below</small></span></div>
